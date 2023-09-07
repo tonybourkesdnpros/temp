@@ -1,0 +1,165 @@
+! Command: show running-config
+! device: leaf2 (vEOS-lab, EOS-4.27.2F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+username Script secret sha512 $6$PNfpb9anSBQ5/aia$phaa3ar5pwkntenD9WHc6Ed5b96lbW0dc0bjtwPnFLaDiCK8D5Cjl6ewP/xdNbl4PtS6Paq.3SssN8pj05NQm.
+username admin privilege 15 role network-admin secret 5 $1$5O85YVVn$HrXcfOivJEnISTMb6xrJc.
+username arista privilege 15 role network-admin secret 5 $1$4VjIjfd1$XkUVulbNDESHFzcxDU.Tk1
+username arista ssh-key ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC37ryWNiFL694iCQcgYyNcnsew2XbLZb5ds/kYfHsb+y2NUUEpIbXI9W8enktLR8g3BNKejIeGTFyn6428in7rvjOwG/i8+lnSD44wASOALsTmFCHwBtVRn0wBHpVgL6ntwubz/iOvS6dYD4Nn9qF+re8X9eF8ev8zKSfL10eOgQYN/F8QT9clpWZh/8nwDoiM5A3TXXiMbbk7rWBMxKtIIHaEhJEyeNLObn52mqCOQo6Bn4gbiJG2MbyGMOIGY4WN5fkuNNahKq/w9yVU4388w1oXpVaqiq6sRm7VmQZJwgm/MiH2GznnlLM5mJ6V09cUYF39DLfB8hpIfdtZNqXf arista@sept2023db-spare-1-39d82b1b
+!
+alias conint sh interface | i connected
+alias mlag-reload bash /mnt/flash/shut_intfs && sudo shutdown now -r
+alias senz show interface counter error | nz
+alias shmc show int | awk '/^[A-Z]/ { intf = $1 } /, address is/ { print intf, $6 }'
+alias snz show interface counter | nz
+alias spd show port-channel %1 detail all
+alias sqnz show interface counter queue | nz
+alias srnz show interface counter rate | nz
+!
+alias intdesc
+   !! Usage: intdesc interface-name description
+   10 config
+   20 int %1
+   30 desc %2
+   40 exit
+!
+daemon TerminAttr
+   exec /usr/bin/TerminAttr -ingestgrpcurl=192.168.0.5:9910 -taillogs -ingestauth=key,atd-lab -smashexcludes=ale,flexCounter,hardware,kni,pulse,strata -ingestexclude=/Sysdb/cell/1/agent,/Sysdb/cell/2/agent
+   no shutdown
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname leaf2
+dns domain arista.lab
+!
+spanning-tree mode mstp
+no spanning-tree vlan-id 4094
+!
+vlan 10
+!
+vlan 4094
+   trunk group MLAG-Peer
+!
+vrf instance Red
+!
+management api http-commands
+   no shutdown
+!
+radius-server host 192.168.0.1 key 7 0207165218120E
+!
+aaa group server radius atds
+   server 192.168.0.1
+!
+aaa authentication login default group atds local
+aaa authorization exec default group atds local
+aaa authorization commands all default local
+!
+interface Port-Channel10
+   description MLAG Peer Link
+   switchport mode trunk
+   switchport trunk group MLAG-Peer
+!
+interface Port-Channel67
+   switchport access vlan 10
+   mlag 67
+!
+interface Ethernet1
+   channel-group 10 mode active
+!
+interface Ethernet2
+   channel-group 10 mode active
+!
+interface Ethernet3
+   no switchport
+   ip address unnumbered Loopback0
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+!
+interface Ethernet4
+   no switchport
+   ip address unnumbered Loopback0
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+!
+interface Ethernet5
+!
+interface Ethernet6
+   channel-group 67 mode active
+!
+interface Ethernet7
+   channel-group 67 mode active
+!
+interface Loopback0
+   ip address 192.168.101.12/32
+   ip ospf area 0.0.0.0
+!
+interface Loopback1
+   ip address 192.168.102.11/32
+   ip ospf area 0.0.0.0
+!
+interface Management1
+   ip address 192.168.0.22/24
+   no lldp transmit
+   no lldp receive
+!
+interface Vlan10
+   vrf Red
+   ip address virtual 10.1.10.1/24
+!
+interface Vlan4094
+   no autostate
+   ip address 192.168.255.2/30
+!
+ip virtual-router mac-address 00:73:1c:00:00:99
+!
+ip routing
+ip routing vrf Red
+!
+mlag configuration
+   domain-id MLAG
+   local-interface Vlan4094
+   peer-address 192.168.255.1
+   peer-link Port-Channel10
+!
+ip route 0.0.0.0/0 192.168.0.1
+!
+ntp server 192.168.0.1 iburst source Management1
+!
+ip radius source-interface Management1
+!
+router bgp 65101
+   router-id 192.168.101.12
+   no bgp default ipv4-unicast
+   maximum-paths 3
+   neighbor EVPN peer group
+   neighbor EVPN remote-as 65100
+   neighbor EVPN update-source Loopback0
+   neighbor EVPN ebgp-multihop
+   neighbor EVPN send-community extended
+   neighbor 192.168.101.101 peer group EVPN
+   neighbor 192.168.101.102 peer group EVPN
+   !
+   vlan 10
+      rd 192.168.101.12:10010
+      route-target both 10010:10010
+      redistribute learned
+   !
+   address-family evpn
+      neighbor EVPN activate
+   !
+   vrf Red
+      rd 192.168.101.11:10000
+      route-target import evpn 10000:10000
+      route-target export evpn 10000:10000
+      redistribute connected
+!
+router ospf 10
+   router-id 192.168.101.12
+   max-lsa 12000
+!
+end
